@@ -1,0 +1,619 @@
+
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NEON ANGEL DEFENSE</title>
+
+<style>
+*{box-sizing:border-box}
+body{
+ margin:0;background:#10091c;color:white;
+ font-family:Arial,sans-serif;
+}
+header{
+ text-align:center;padding:18px;
+ background:linear-gradient(90deg,#390e54,#17102d,#5a174e);
+ border-bottom:2px solid #ff71df;
+}
+h1{
+ color:#ff9eeb;
+ letter-spacing:5px;
+ text-shadow:0 0 20px #ff36d8;
+ margin:5px;
+}
+.subtitle{color:#d8b9ef}
+#stats{
+ display:flex;justify-content:center;
+ flex-wrap:wrap;gap:20px;
+ background:#21102f;padding:14px;
+ font-weight:bold;
+}
+.stat{color:#ff9ee9}
+canvas{
+ display:block;width:min(1000px,100%);
+ height:auto;margin:12px auto;
+ border:2px solid #e65cdb;
+ box-shadow:0 0 35px #c32bcf;
+ cursor:crosshair;
+}
+#controls{
+ max-width:1000px;margin:auto;
+ display:flex;flex-wrap:wrap;
+ justify-content:center;gap:9px;padding:10px;
+}
+button{
+ background:#54245e;color:white;
+ border:1px solid #ff83ed;
+ padding:12px 14px;border-radius:10px;
+ cursor:pointer;font-weight:bold;
+}
+button:hover{background:#a12c96}
+button.active{
+ background:#d42bb6;
+ box-shadow:0 0 15px #ff52e8;
+}
+#message{text-align:center;color:#ffa6ed;padding:12px}
+#help{text-align:center;color:#bca5c9;padding:15px;font-size:13px}
+</style>
+</head>
+
+<body>
+
+<header>
+<h1>✦ NEON ANGEL DEFENSE ✦</h1>
+<div class="subtitle">MAGICAL GIRLS vs COSMIC DEMONS</div>
+</header>
+
+<div id="stats">
+<div>💎 Kryształy: <span class="stat" id="money">500</span></div>
+<div>💗 Energia bazy: <span class="stat" id="hp">100</span></div>
+<div>🌸 Fala: <span class="stat" id="wave">0</span>/20</div>
+<div>👾 Demony: <span class="stat" id="enemies">0</span></div>
+<div>⭐ Wynik: <span class="stat" id="score">0</span></div>
+</div>
+
+<canvas id="game" width="1000" height="650"></canvas>
+
+<div id="controls">
+<button id="sakura" onclick="selectTower('sakura')">
+🌸 SAKURA<br>100 💎
+</button>
+<button id="luna" onclick="selectTower('luna')">
+🌙 LUNA<br>160 💎
+</button>
+<button id="aqua" onclick="selectTower('aqua')">
+💧 AQUA<br>210 💎
+</button>
+<button id="nova" onclick="selectTower('nova')">
+✨ NOVA<br>250 💎
+</button>
+<button onclick="upgrade()">⬆ ULEPSZ</button>
+<button onclick="sell()">💎 SPRZEDAJ</button>
+<button onclick="startWave()">⚔ NASTĘPNA FALA</button>
+<button onclick="togglePause()" id="pause">⏸ PAUZA</button>
+<button onclick="changeSpeed()" id="speed">⏩ x1</button>
+<button onclick="restart()">🔄 RESTART</button>
+</div>
+
+<div id="message">Wybierz bohaterkę i ustaw ją na mapie!</div>
+<div id="help">
+Kliknij jednostkę, aby ją zaznaczyć. Możesz ją ulepszyć lub sprzedać.
+Nie stawiaj bohaterek na drodze demonów.
+</div>
+
+<script>
+const canvas=document.getElementById("game");
+const ctx=canvas.getContext("2d");
+const W=1000,H=650;
+
+const path=[
+[-20,140],[180,140],[180,350],
+[390,350],[390,100],[650,100],
+[650,470],[830,470],[830,250],[1020,250]
+];
+
+const types={
+ sakura:{
+  name:"Sakura",cost:100,range:150,
+  damage:20,cooldown:0.6,color:"#ff69cf",
+  speed:9,emoji:"🌸"
+ },
+ luna:{
+  name:"Luna",cost:160,range:195,
+  damage:43,cooldown:1.2,color:"#8f8aff",
+  speed:7,emoji:"🌙"
+ },
+ aqua:{
+  name:"Aqua",cost:210,range:140,
+  damage:70,cooldown:1.6,color:"#4de7ff",
+  speed:7,emoji:"💧"
+ },
+ nova:{
+  name:"Nova",cost:250,range:300,
+  damage:95,cooldown:2.2,color:"#ffe879",
+  speed:13,emoji:"✨"
+ }
+};
+
+let towers=[],enemies=[],shots=[],particles=[];
+let money=500,hp=100,wave=0,score=0;
+let selectedType=null,selectedTower=null;
+let spawning=false,spawnLeft=0,spawnTimer=0;
+let paused=false,running=true,speed=1;
+let lastTime=performance.now();
+let frame=0;
+
+const rand=(a,b)=>Math.random()*(b-a)+a;
+const dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
+
+function hud(){
+ document.getElementById("money").textContent=money;
+ document.getElementById("hp").textContent=hp;
+ document.getElementById("wave").textContent=wave;
+ document.getElementById("enemies").textContent=enemies.length;
+ document.getElementById("score").textContent=score;
+}
+
+function msg(t){
+ document.getElementById("message").textContent=t;
+}
+
+function pathDistance(x,y){
+ let best=Infinity;
+ for(let i=0;i<path.length-1;i++){
+  let a=path[i],b=path[i+1];
+  let dx=b[0]-a[0],dy=b[1]-a[1];
+  let t=Math.max(0,Math.min(1,
+   ((x-a[0])*dx+(y-a[1])*dy)/(dx*dx+dy*dy)
+  ));
+  best=Math.min(best,Math.hypot(
+   x-a[0]-dx*t,y-a[1]-dy*t
+  ));
+ }
+ return best;
+}
+
+function selectTower(type){
+ selectedType=type;
+ selectedTower=null;
+ document.querySelectorAll("#controls button")
+ .forEach(b=>b.classList.remove("active"));
+ document.getElementById(type).classList.add("active");
+ msg("Wybrano "+types[type].name+". Kliknij mapę.");
+}
+
+function place(x,y){
+ if(!selectedType)return;
+ let t=types[selectedType];
+
+ if(money<t.cost){msg("Za mało kryształów!");return;}
+ if(pathDistance(x,y)<52){msg("Nie możesz budować na drodze!");return;}
+ if(x<25||x>975||y<25||y>625)return;
+ if(towers.some(q=>dist(q,{x,y})<43)){
+  msg("Za blisko innej bohaterki!");return;
+ }
+
+ money-=t.cost;
+ towers.push({
+  x,y,type:selectedType,level:1,
+  cooldown:0,angle:0,invested:t.cost
+ });
+ selectedTower=towers[towers.length-1];
+ hud();
+ msg("Nowa bohaterka dołączyła do drużyny!");
+}
+
+canvas.addEventListener("click",e=>{
+ const r=canvas.getBoundingClientRect();
+ const x=(e.clientX-r.left)*W/r.width;
+ const y=(e.clientY-r.top)*H/r.height;
+
+ if(selectedType){place(x,y);return;}
+
+ selectedTower=null;
+ for(let i=towers.length-1;i>=0;i--){
+  if(dist(towers[i],{x,y})<27){
+   selectedTower=towers[i];
+   msg(types[selectedTower.type].name+
+    " | poziom "+selectedTower.level);
+   break;
+  }
+ }
+});
+
+function spawnEnemy(){
+ let boss=wave%5===0;
+ let hpEnemy=(50+wave*22)*(boss?10:1);
+
+ enemies.push({
+  x:path[0][0],y:path[0][1],
+  segment:0,progress:0,
+  hp:hpEnemy,maxHP:hpEnemy,
+  speed:(boss?0.65:1.15)+wave*0.035,
+  radius:boss?26:14,
+  boss,
+  color:boss?"#ff3e91":
+   wave>10?"#b65aff":"#63e9b2",
+  reward:boss?250:30+wave*2
+ });
+}
+
+function startWave(){
+ if(spawning||enemies.length>0||!running)return;
+ if(wave>=20){victory();return;}
+ wave++;
+ spawnLeft=wave%5===0?5:8+wave*2;
+ spawnTimer=0;
+ spawning=true;
+ msg(wave%5===0?
+  "⚠ NADCHODZI WIELKA DEMONICA!":
+  "Fala "+wave+" rozpoczęta!");
+ hud();
+}
+
+function updateSpawning(dt){
+ if(!spawning)return;
+ spawnTimer-=dt;
+ if(spawnTimer<=0&&spawnLeft>0){
+  spawnEnemy();
+  spawnLeft--;
+  spawnTimer=wave%5===0?100:65;
+ }
+ if(spawnLeft<=0)spawning=false;
+}
+
+function moveEnemy(e,dt){
+ let a=path[e.segment],b=path[e.segment+1];
+ if(!b)return false;
+ let dx=b[0]-a[0],dy=b[1]-a[1];
+ let length=Math.hypot(dx,dy);
+ e.progress+=e.speed*dt/length;
+ if(e.progress>=1){
+  e.segment++;
+  e.progress=0;
+  if(e.segment>=path.length-1){
+   hp-=e.boss?25:8;
+   return false;
+  }
+ }
+ a=path[e.segment];b=path[e.segment+1];
+ e.x=a[0]+(b[0]-a[0])*e.progress;
+ e.y=a[1]+(b[1]-a[1])*e.progress;
+ return true;
+}
+
+function shoot(t,e){
+ let type=types[t.type];
+ shots.push({
+  x:t.x,y:t.y,target:e,
+  damage:type.damage*(1+(t.level-1)*0.65),
+  speed:type.speed,color:type.color,
+  radius:t.type==="nova"?6:4,
+  splash:t.type==="luna"?48:0
+ });
+ t.cooldown=type.cooldown*Math.pow(0.87,t.level-1);
+}
+
+function updateTowers(dt){
+ towers.forEach(t=>{
+  let type=types[t.type];
+  t.cooldown-=dt;
+  let target=null,best=-1;
+
+  enemies.forEach(e=>{
+   if(dist(t,e)<=type.range+(t.level-1)*10){
+    let progress=e.segment*10000+e.progress*10000;
+    if(progress>best){best=progress;target=e;}
+   }
+  });
+
+  if(target){
+   t.angle=Math.atan2(target.y-t.y,target.x-t.x);
+   if(t.cooldown<=0)shoot(t,target);
+  }
+ });
+}
+
+function burst(x,y,color){
+ for(let i=0;i<15;i++){
+  let a=rand(0,Math.PI*2),v=rand(1,5);
+  particles.push({
+   x,y,vx:Math.cos(a)*v,vy:Math.sin(a)*v,
+   life:rand(15,35),color
+  });
+ }
+}
+
+function updateShots(dt){
+ shots=shots.filter(s=>{
+  if(!s.target||!enemies.includes(s.target))return false;
+  let dx=s.target.x-s.x,dy=s.target.y-s.y;
+  let d=Math.hypot(dx,dy);
+
+  if(d<s.speed*dt+8){
+   if(s.splash){
+    enemies.forEach(e=>{
+     if(dist(e,s.target)<s.splash)e.hp-=s.damage;
+    });
+   }else s.target.hp-=s.damage;
+   burst(s.target.x,s.target.y,s.color);
+   return false;
+  }
+
+  s.x+=dx/d*s.speed*dt;
+  s.y+=dy/d*s.speed*dt;
+
+  ctx.shadowBlur=18;
+  ctx.shadowColor=s.color;
+  ctx.fillStyle=s.color;
+  ctx.beginPath();
+  ctx.arc(s.x,s.y,s.radius,0,Math.PI*2);
+  ctx.fill();
+  ctx.shadowBlur=0;
+  return true;
+ });
+}
+
+function updateEnemies(dt){
+ enemies=enemies.filter(e=>{
+  if(e.hp<=0){
+   money+=e.reward;
+   score+=e.reward*10;
+   burst(e.x,e.y,e.color);
+   return false;
+  }
+  return moveEnemy(e,dt);
+ });
+}
+
+function upgrade(){
+ if(!selectedTower){msg("Zaznacz bohaterkę!");return;}
+ if(selectedTower.level>=5){msg("Maksymalny poziom!");return;}
+ let cost=100*selectedTower.level;
+ if(money<cost){msg("Za mało kryształów!");return;}
+ money-=cost;
+ selectedTower.invested+=cost;
+ selectedTower.level++;
+ hud();
+ msg("Bohaterka awansowała na poziom "+selectedTower.level+"!");
+}
+
+function sell(){
+ if(!selectedTower){msg("Wybierz bohaterkę!");return;}
+ money+=Math.floor(selectedTower.invested*0.65);
+ towers=towers.filter(t=>t!==selectedTower);
+ selectedTower=null;
+ hud();
+ msg("Bohaterka opuszcza pole bitwy.");
+}
+
+function drawBackground(){
+ let g=ctx.createLinearGradient(0,0,W,H);
+ g.addColorStop(0,"#160d2d");
+ g.addColorStop(1,"#090f27");
+ ctx.fillStyle=g;
+ ctx.fillRect(0,0,W,H);
+
+ for(let i=0;i<100;i++){
+  let x=(i*173+frame*0.05)%W;
+  let y=(i*97)%H;
+  ctx.fillStyle="rgba(255,160,245,.4)";
+  ctx.fillRect(x,y,2,2);
+ }
+
+ ctx.strokeStyle="#30244c";
+ ctx.lineWidth=1;
+ for(let x=0;x<W;x+=50){
+  ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();
+ }
+ for(let y=0;y<H;y+=50){
+  ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();
+ }
+}
+
+function drawPath(){
+ ctx.beginPath();
+ path.forEach((p,i)=>{
+  if(i===0)ctx.moveTo(...p);
+  else ctx.lineTo(...p);
+ });
+ ctx.lineJoin="round";
+ ctx.lineCap="round";
+ ctx.lineWidth=78;
+ ctx.strokeStyle="#382346";
+ ctx.stroke();
+
+ ctx.lineWidth=3;
+ ctx.setLineDash([13,12]);
+ ctx.strokeStyle="#ed86e9";
+ ctx.stroke();
+ ctx.setLineDash([]);
+}
+
+function drawTower(t){
+ let type=types[t.type];
+ ctx.save();
+ ctx.translate(t.x,t.y);
+
+ ctx.shadowBlur=25;
+ ctx.shadowColor=type.color;
+ ctx.fillStyle="#34204e";
+ ctx.strokeStyle=type.color;
+ ctx.lineWidth=3;
+ ctx.beginPath();
+ ctx.arc(0,0,23,0,Math.PI*2);
+ ctx.fill();ctx.stroke();
+
+ ctx.rotate(t.angle);
+ ctx.fillStyle=type.color;
+ ctx.fillRect(-4,-6,29,12);
+ ctx.restore();
+
+ ctx.font="bold 22px Arial";
+ ctx.textAlign="center";
+ ctx.fillStyle="white";
+ ctx.fillText(type.emoji,t.x,t.y+8);
+
+ ctx.font="12px Arial";
+ ctx.fillText("LV."+t.level,t.x,t.y+38);
+
+ if(t===selectedTower){
+  ctx.beginPath();
+  ctx.arc(t.x,t.y,type.range+(t.level-1)*10,0,Math.PI*2);
+  ctx.strokeStyle="#fff9";
+  ctx.setLineDash([5,5]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+ }
+}
+
+function drawEnemy(e){
+ ctx.save();
+ ctx.translate(e.x,e.y);
+ ctx.shadowBlur=25;
+ ctx.shadowColor=e.color;
+ ctx.fillStyle=e.color;
+ ctx.beginPath();
+ ctx.arc(0,0,e.radius,0,Math.PI*2);
+ ctx.fill();
+
+ ctx.fillStyle="#250d31";
+ ctx.beginPath();
+ ctx.arc(-5,-3,3,0,Math.PI*2);
+ ctx.arc(5,-3,3,0,Math.PI*2);
+ ctx.fill();
+ ctx.restore();
+
+ let w=e.radius*2.5;
+ ctx.fillStyle="#35132c";
+ ctx.fillRect(e.x-w/2,e.y-e.radius-12,w,5);
+ ctx.fillStyle="#ff78bd";
+ ctx.fillRect(e.x-w/2,e.y-e.radius-12,w*Math.max(0,e.hp/e.maxHP),5);
+
+ if(e.boss){
+  ctx.fillStyle="#ff9ce2";
+  ctx.font="bold 14px Arial";
+  ctx.textAlign="center";
+  ctx.fillText("DEMON QUEEN",e.x,e.y-e.radius-20);
+ }
+}
+
+function drawEffects(dt){
+ particles=particles.filter(p=>{
+  p.x+=p.vx*dt;
+  p.y+=p.vy*dt;
+  p.life-=dt;
+  ctx.globalAlpha=Math.max(0,p.life/35);
+  ctx.fillStyle=p.color;
+  ctx.beginPath();
+  ctx.arc(p.x,p.y,3,0,Math.PI*2);
+  ctx.fill();
+  ctx.globalAlpha=1;
+  return p.life>0;
+ });
+}
+
+function draw(){
+ drawBackground();
+ drawPath();
+
+ towers.forEach(drawTower);
+ enemies.forEach(drawEnemy);
+
+ // Kryształ bazy
+ ctx.shadowBlur=25;
+ ctx.shadowColor="#ff72e6";
+ ctx.fillStyle="#ff8be9";
+ ctx.beginPath();
+ ctx.moveTo(965,225);
+ ctx.lineTo(987,250);
+ ctx.lineTo(965,275);
+ ctx.lineTo(943,250);
+ ctx.closePath();
+ ctx.fill();
+ ctx.shadowBlur=0;
+
+ ctx.fillStyle="white";
+ ctx.font="bold 13px Arial";
+ ctx.fillText("HEART CORE",925,300);
+
+ if(selectedType){
+  ctx.fillStyle="#ffb9ed";
+  ctx.font="15px Arial";
+  ctx.fillText("TRYB BUDOWY",15,25);
+ }
+
+ drawEffects(0);
+}
+
+function togglePause(){
+ paused=!paused;
+ document.getElementById("pause").textContent=
+ paused?"▶ WZNÓW":"⏸ PAUZA";
+}
+
+function changeSpeed(){
+ speed=speed===1?2:speed===2?3:1;
+ document.getElementById("speed").textContent="⏩ x"+speed;
+}
+
+function end(title,text){
+ running=false;
+ const o=document.createElement("div");
+ o.style.cssText="position:fixed;inset:0;background:#10091cee;display:flex;align-items:center;justify-content:center;z-index:10";
+ o.innerHTML=`
+ <div style="background:#35154b;padding:40px;border:2px solid #ff78df;border-radius:20px;text-align:center;max-width:90%">
+ <h1 style="color:#ff9ee9">${title}</h1>
+ <h2>${text}</h2>
+ <button onclick="location.reload()">NOWA GRA</button>
+ </div>`;
+ document.body.appendChild(o);
+}
+
+function victory(){
+ end("🌸 ZWYCIĘSTWO! 🌸",
+ "Pokonałaś wszystkie 20 fal! Wynik: "+score);
+}
+
+function gameOver(){
+ end("💔 BAZA ZNISZCZONA",
+ "Dotarłaś do fali "+wave+". Wynik: "+score);
+}
+
+function restart(){location.reload();}
+
+function loop(now){
+ if(!running)return;
+ let dt=Math.min((now-lastTime)/16.67,3);
+ lastTime=now;
+ frame++;
+
+ if(!paused){
+  for(let i=0;i<speed;i++){
+   updateSpawning(dt);
+   updateEnemies(dt);
+   updateTowers(dt);
+   updateShots(dt);
+  }
+
+  if(hp<=0){gameOver();return;}
+  if(wave>=20&&!spawning&&enemies.length===0){
+   victory();return;
+  }
+  hud();
+ }
+
+ draw();
+
+ if(!paused)drawEffects(dt*speed);
+
+ requestAnimationFrame(loop);
+}
+
+hud();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
