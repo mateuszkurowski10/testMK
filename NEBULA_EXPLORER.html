@@ -1,0 +1,386 @@
+
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<title>NEBULA EXPLORER</title>
+<style>
+* { box-sizing: border-box; }
+body {
+    margin: 0;
+    background: #050514;
+    color: white;
+    font-family: Arial;
+    overflow: hidden;
+}
+#game {
+    display: block;
+    margin: auto;
+    background: radial-gradient(circle, #171744, #050510);
+}
+#hud {
+    position: absolute;
+    top: 15px;
+    left: 20px;
+    font-size: 18px;
+    line-height: 1.8;
+    color: #8dfcff;
+    text-shadow: 0 0 10px cyan;
+}
+#help {
+    position: absolute;
+    bottom: 15px;
+    width: 100%;
+    text-align: center;
+    color: #aaaaff;
+}
+#overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #050514dd;
+}
+.panel {
+    text-align: center;
+    padding: 35px;
+    border: 1px solid #37dfff;
+    border-radius: 20px;
+    background: #11112c;
+    box-shadow: 0 0 40px #136aff66;
+}
+h1 {
+    color: #56f5ff;
+    font-size: 38px;
+    text-shadow: 0 0 20px cyan;
+}
+button {
+    padding: 15px 30px;
+    background: #11a9c9;
+    border: none;
+    border-radius: 10px;
+    color: white;
+    font-size: 18px;
+    cursor: pointer;
+}
+button:hover { background: #8a42ff; }
+</style>
+</head>
+<body>
+
+<div id="hud">
+    🚀 NEBULA EXPLORER<br>
+    Punkty: <span id="score">0</span><br>
+    Życia: <span id="lives">3</span><br>
+    Poziom: <span id="level">1</span><br>
+    Kryształy: <span id="crystals">0</span>
+</div>
+
+<canvas id="game" width="1000" height="650"></canvas>
+
+<div id="help">
+    Sterowanie: WASD lub strzałki | Zbieraj kryształy | Unikaj asteroid
+</div>
+
+<div id="overlay">
+    <div class="panel">
+        <h1>NEBULA EXPLORER</h1>
+        <p>Odkryj tajemnice kosmosu!</p>
+        <p>Zbieraj kryształy i unikaj asteroid.</p>
+        <button onclick="startGame()">ROZPOCZNIJ MISJĘ</button>
+    </div>
+</div>
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+const W = canvas.width;
+const H = canvas.height;
+
+let keys = {};
+let player, asteroids, crystals, stars;
+let score, lives, collected, level;
+let running = false;
+let frame = 0;
+
+document.addEventListener("keydown", e => {
+    keys[e.key.toLowerCase()] = true;
+    if (["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"," "].includes(e.key))
+        e.preventDefault();
+});
+document.addEventListener("keyup", e => {
+    keys[e.key.toLowerCase()] = false;
+});
+
+function random(min,max) {
+    return Math.random()*(max-min)+min;
+}
+
+function makeStars() {
+    return Array.from({length:180}, () => ({
+        x:random(0,W),
+        y:random(0,H),
+        s:random(0.5,2.5),
+        speed:random(0.2,1.2)
+    }));
+}
+
+function newAsteroid() {
+    return {
+        x:random(30,W-30),
+        y:-40,
+        r:random(17,31),
+        speed:random(1.5,3.5)+level*0.4,
+        rotation:random(0,6),
+        spin:random(-0.04,0.04)
+    };
+}
+
+function newCrystal() {
+    return {
+        x:random(40,W-40),
+        y:-30,
+        r:13,
+        speed:random(1.5,2.7),
+        rotation:0
+    };
+}
+
+function startGame() {
+    score=0;
+    lives=3;
+    collected=0;
+    level=1;
+    frame=0;
+
+    player={x:W/2,y:H-100,r:20,speed:5};
+
+    asteroids=[];
+    crystals=[];
+    stars=makeStars();
+
+    for(let i=0;i<7;i++) asteroids.push(newAsteroid());
+    for(let i=0;i<4;i++) crystals.push(newCrystal());
+
+    document.getElementById("overlay").style.display="none";
+
+    running=true;
+    requestAnimationFrame(loop);
+}
+
+function drawShip() {
+    ctx.save();
+    ctx.translate(player.x,player.y);
+
+    // Silnik
+    ctx.fillStyle="#ff8c32";
+    ctx.shadowBlur=20;
+    ctx.shadowColor="orange";
+
+    ctx.beginPath();
+    ctx.moveTo(-9,15);
+    ctx.lineTo(0,random(23,36));
+    ctx.lineTo(9,15);
+    ctx.fill();
+
+    // Kadłub
+    ctx.shadowColor="#35eaff";
+    ctx.fillStyle="#b7f7ff";
+    ctx.beginPath();
+    ctx.moveTo(0,-25);
+    ctx.lineTo(17,16);
+    ctx.lineTo(0,10);
+    ctx.lineTo(-17,16);
+    ctx.closePath();
+    ctx.fill();
+
+    // Kabina
+    ctx.fillStyle="#8c5cff";
+    ctx.beginPath();
+    ctx.ellipse(0,-5,6,10,0,0,Math.PI*2);
+    ctx.fill();
+
+    ctx.restore();
+}
+
+function drawAsteroid(a) {
+    ctx.save();
+    ctx.translate(a.x,a.y);
+    ctx.rotate(a.rotation);
+
+    ctx.fillStyle="#69697c";
+    ctx.strokeStyle="#b4b4cf";
+    ctx.lineWidth=2;
+
+    ctx.beginPath();
+
+    for(let i=0;i<9;i++) {
+        let angle=i*Math.PI*2/9;
+        let r=a.r*(0.8+0.2*Math.sin(i*4));
+
+        if(i===0) ctx.moveTo(Math.cos(angle)*r,Math.sin(angle)*r);
+        else ctx.lineTo(Math.cos(angle)*r,Math.sin(angle)*r);
+    }
+
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle="#3b3b50";
+    ctx.beginPath();
+    ctx.arc(-5,-3,5,0,Math.PI*2);
+    ctx.fill();
+
+    ctx.restore();
+}
+
+function drawCrystal(c) {
+    ctx.save();
+    ctx.translate(c.x,c.y);
+    ctx.rotate(c.rotation);
+
+    ctx.shadowBlur=25;
+    ctx.shadowColor="#00ffff";
+
+    ctx.fillStyle="#40faff";
+    ctx.beginPath();
+    ctx.moveTo(0,-c.r);
+    ctx.lineTo(c.r*0.7,0);
+    ctx.lineTo(0,c.r);
+    ctx.lineTo(-c.r*0.7,0);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.restore();
+}
+
+function collision(a,b,r) {
+    return Math.hypot(a.x-b.x,a.y-b.y)<r;
+}
+
+function update() {
+    frame++;
+
+    if(keys["arrowleft"] || keys["a"]) player.x-=player.speed;
+    if(keys["arrowright"] || keys["d"]) player.x+=player.speed;
+    if(keys["arrowup"] || keys["w"]) player.y-=player.speed;
+    if(keys["arrowdown"] || keys["s"]) player.y+=player.speed;
+
+    player.x=Math.max(25,Math.min(W-25,player.x));
+    player.y=Math.max(30,Math.min(H-30,player.y));
+
+    // Gwiazdy
+    stars.forEach(s=>{
+        s.y+=s.speed;
+        if(s.y>H) {
+            s.y=0;
+            s.x=random(0,W);
+        }
+    });
+
+    // Asteroidy
+    asteroids.forEach(a=>{
+        a.y+=a.speed;
+        a.rotation+=a.spin;
+
+        if(a.y>H+40) {
+            a.y=-40;
+            a.x=random(30,W-30);
+        }
+
+        if(collision(player,a,player.r+a.r-5)) {
+            a.y=-50;
+            a.x=random(30,W-30);
+            lives--;
+        }
+    });
+
+    // Kryształy
+    crystals.forEach(c=>{
+        c.y+=c.speed;
+        c.rotation+=0.04;
+
+        if(c.y>H+30) {
+            c.y=-30;
+            c.x=random(40,W-40);
+        }
+
+        if(collision(player,c,player.r+c.r)) {
+            score+=100;
+            collected++;
+            c.y=-40;
+            c.x=random(40,W-40);
+        }
+    });
+
+    level=1+Math.floor(collected/5);
+
+    // Aktualizacja trudności
+    if(frame%180===0 && asteroids.length<18) {
+        asteroids.push(newAsteroid());
+    }
+
+    document.getElementById("score").textContent=score;
+    document.getElementById("lives").textContent="❤️".repeat(Math.max(0,lives));
+    document.getElementById("level").textContent=level;
+    document.getElementById("crystals").textContent=collected;
+
+    if(lives<=0) endGame();
+}
+
+function draw() {
+    ctx.clearRect(0,0,W,H);
+
+    // Tło
+    ctx.fillStyle="#09091d";
+    ctx.fillRect(0,0,W,H);
+
+    // Gwiazdy
+    stars.forEach(s=>{
+        ctx.fillStyle="#ffffff";
+        ctx.globalAlpha=0.4+Math.random()*0.6;
+        ctx.beginPath();
+        ctx.arc(s.x,s.y,s.s,0,Math.PI*2);
+        ctx.fill();
+    });
+    ctx.globalAlpha=1;
+
+    // Mgławica
+    let glow=ctx.createRadialGradient(500,300,20,500,300,400);
+    glow.addColorStop(0,"#27205c44");
+    glow.addColorStop(1,"#09091d00");
+    ctx.fillStyle=glow;
+    ctx.fillRect(0,0,W,H);
+
+    asteroids.forEach(drawAsteroid);
+    crystals.forEach(drawCrystal);
+    drawShip();
+}
+
+function endGame() {
+    running=false;
+
+    document.getElementById("overlay").innerHTML=`
+    <div class="panel">
+        <h1>KONIEC MISJI</h1>
+        <h2>Wynik: ${score}</h2>
+        <p>Zebrane kryształy: ${collected}</p>
+        <button onclick="startGame()">ZAGRAJ PONOWNIE</button>
+    </div>`;
+
+    document.getElementById("overlay").style.display="flex";
+}
+
+function loop() {
+    if(!running) return;
+
+    update();
+    draw();
+
+    if(running) requestAnimationFrame(loop);
+}
+</script>
+</body>
+</html>
