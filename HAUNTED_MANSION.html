@@ -1,0 +1,606 @@
+
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HAUNTED MANSION</title>
+
+<style>
+* {box-sizing:border-box}
+
+body {
+    margin:0;
+    background:#080810;
+    color:white;
+    font-family:Arial,sans-serif;
+    overflow:hidden;
+}
+
+canvas {
+    display:block;
+    width:min(100vw,900px);
+    height:auto;
+    margin:65px auto 0;
+    background:#11111c;
+    border:2px solid #693c8e;
+    box-shadow:0 0 30px #9c38c9;
+}
+
+#hud {
+    position:absolute;
+    top:8px;
+    left:15px;
+    color:#a9faff;
+    font-size:15px;
+    line-height:1.6;
+    z-index:2;
+}
+
+#help {
+    text-align:center;
+    color:#aaa;
+    padding:8px;
+    font-size:13px;
+}
+
+#overlay {
+    position:fixed;
+    inset:0;
+    background:#050509ee;
+    display:flex;
+    justify-content:center;
+    align-items:center;
+    z-index:10;
+}
+
+.panel {
+    background:#171322;
+    border:2px solid #b14de0;
+    border-radius:18px;
+    padding:30px;
+    text-align:center;
+    width:min(90%,450px);
+    box-shadow:0 0 45px #9c38c9;
+}
+
+h1 {
+    color:#e36aff;
+    text-shadow:0 0 20px purple;
+}
+
+button {
+    padding:15px 28px;
+    background:#9c38c9;
+    color:white;
+    border:0;
+    border-radius:9px;
+    font-size:18px;
+    cursor:pointer;
+}
+
+button:hover {
+    background:#c45bff;
+}
+
+</style>
+</head>
+
+<body>
+
+<div id="hud">
+👻 HAUNTED MANSION<br>
+Klucze: <span id="keys">0</span>/5<br>
+Bateria: <span id="battery">100</span>%<br>
+Życia: <span id="lives">3</span>
+</div>
+
+<canvas id="game" width="900" height="750"></canvas>
+
+<div id="help">
+WASD / STRZAŁKI – ruch | SHIFT – sprint | Zbieraj klucze i unikaj ducha
+</div>
+
+<div id="overlay">
+<div class="panel">
+<h1>👻 HAUNTED MANSION</h1>
+<p>Jesteś uwięziony w starej rezydencji.</p>
+<p>Znajdź 5 kluczy i otwórz drzwi wyjściowe.</p>
+<p>Uważaj! Duch już wie, że tu jesteś...</p>
+<button onclick="startGame()">ROZPOCZNIJ GRĘ</button>
+</div>
+</div>
+
+<script>
+
+const canvas=document.getElementById("game");
+const ctx=canvas.getContext("2d");
+
+const W=900;
+const H=750;
+const TILE=50;
+
+const map=[
+"11111111111111111",
+"10000000000000001",
+"10111011101110101",
+"10001000100010001",
+"11101010111010111",
+"10000010000000001",
+"10111011101110101",
+"10001000001010001",
+"10101011101010101",
+"10000010000000001",
+"10111010111011101",
+"10001000001000001",
+"10101110101110101",
+"10000000000000001",
+"11111111111111111"
+];
+
+let player;
+let ghost;
+let keys=[];
+let batteries=[];
+let stars=[];
+
+let score=0;
+let collected=0;
+let energy=100;
+let lives=3;
+let running=false;
+let frame=0;
+let lastTime=0;
+
+let pressed={};
+
+document.addEventListener("keydown",e=>{
+    pressed[e.key.toLowerCase()]=true;
+
+    if(["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"," "].includes(e.key)){
+        e.preventDefault();
+    }
+});
+
+document.addEventListener("keyup",e=>{
+    pressed[e.key.toLowerCase()]=false;
+});
+
+function random(min,max){
+    return Math.random()*(max-min)+min;
+}
+
+function free(x,y){
+    const c=Math.floor(x/TILE);
+    const r=Math.floor(y/TILE);
+
+    return map[r] && map[r][c]==="0";
+}
+
+function randomPosition(minDistance=0){
+    let p;
+    let attempts=0;
+
+    do{
+        p={
+            x:random(75,825),
+            y:random(75,675)
+        };
+
+        attempts++;
+
+        if(attempts>1000) break;
+
+    }while(
+        !free(p.x,p.y) ||
+        (player && Math.hypot(p.x-player.x,p.y-player.y)<minDistance)
+    );
+
+    return p;
+}
+
+function updateHUD(){
+    document.getElementById("keys").textContent=collected;
+    document.getElementById("battery").textContent=Math.floor(energy);
+    document.getElementById("lives").textContent=lives;
+}
+
+function startGame(){
+
+    player={
+        x:75,
+        y:75,
+        speed:2.7,
+        invincible:0
+    };
+
+    ghost={
+        x:825,
+        y:675,
+        speed:0.95
+    };
+
+    collected=0;
+    score=0;
+    energy=100;
+    lives=3;
+    frame=0;
+
+    keys=[];
+    batteries=[];
+    stars=[];
+
+    pressed={};
+
+    for(let i=0;i<5;i++){
+        keys.push(randomPosition(130));
+    }
+
+    for(let i=0;i<5;i++){
+        batteries.push(randomPosition(100));
+    }
+
+    for(let i=0;i<150;i++){
+        stars.push({
+            x:random(0,W),
+            y:random(0,H),
+            size:random(0.5,2)
+        });
+    }
+
+    updateHUD();
+
+    running=true;
+
+    document.getElementById("overlay").style.display="none";
+
+    lastTime=performance.now();
+    requestAnimationFrame(loop);
+}
+
+// ==========================================
+// RUCH I KOLIZJE
+// ==========================================
+
+function move(obj,dx,dy){
+
+    if(free(obj.x+dx,obj.y)){
+        obj.x+=dx;
+    }
+
+    if(free(obj.x,obj.y+dy)){
+        obj.y+=dy;
+    }
+}
+
+function update(dt){
+
+    frame++;
+
+    const sprint=pressed["shift"];
+    const speed=sprint?4.2:player.speed;
+
+    let dx=0;
+    let dy=0;
+
+    if(pressed["w"]||pressed["arrowup"])dy-=speed;
+    if(pressed["s"]||pressed["arrowdown"])dy+=speed;
+    if(pressed["a"]||pressed["arrowleft"])dx-=speed;
+    if(pressed["d"]||pressed["arrowright"])dx+=speed;
+
+    if(dx!==0 && dy!==0){
+        dx*=0.707;
+        dy*=0.707;
+    }
+
+    move(player,dx,dy);
+
+    if(sprint && (dx!==0||dy!==0)){
+        energy=Math.max(0,energy-0.045*dt);
+    }else{
+        energy=Math.max(0,energy-0.008*dt);
+    }
+
+    if(player.invincible>0){
+        player.invincible-=dt;
+    }
+
+    // DUCH ŚCIGA GRACZA
+
+    const angle=Math.atan2(
+        player.y-ghost.y,
+        player.x-ghost.x
+    );
+
+    let ghostSpeed=ghost.speed+collected*0.08;
+
+    move(
+        ghost,
+        Math.cos(angle)*ghostSpeed*dt,
+        Math.sin(angle)*ghostSpeed*dt
+    );
+
+    // KLUCZE
+
+    keys=keys.filter(k=>{
+
+        if(Math.hypot(k.x-player.x,k.y-player.y)<23){
+
+            collected++;
+            score+=100;
+            return false;
+        }
+
+        return true;
+    });
+
+    // BATERIE
+
+    batteries=batteries.filter(b=>{
+
+        if(Math.hypot(b.x-player.x,b.y-player.y)<23){
+
+            energy=Math.min(100,energy+35);
+            return false;
+        }
+
+        return true;
+    });
+
+    // KOLIZJA Z DUCHEM
+
+    if(
+        Math.hypot(player.x-ghost.x,player.y-ghost.y)<25 &&
+        player.invincible<=0
+    ){
+
+        lives--;
+        player.invincible=1200;
+
+        // Odsunięcie ducha
+        ghost.x=825;
+        ghost.y=675;
+
+        if(lives<=0){
+            endGame(false);
+            return;
+        }
+    }
+
+    updateHUD();
+
+    // WYJŚCIE
+
+    if(
+        collected>=5 &&
+        player.x>790 &&
+        player.y<105
+    ){
+        endGame(true);
+    }
+}
+
+// ==========================================
+// RYSOWANIE
+// ==========================================
+
+function drawMap(){
+
+    for(let r=0;r<map.length;r++){
+        for(let c=0;c<map[r].length;c++){
+
+            const x=c*TILE;
+            const y=r*TILE;
+
+            if(map[r][c]==="1"){
+
+                ctx.fillStyle="#373044";
+                ctx.fillRect(x,y,TILE,TILE);
+
+                ctx.strokeStyle="#554564";
+                ctx.lineWidth=2;
+                ctx.strokeRect(x,y,TILE,TILE);
+
+            }else{
+
+                ctx.fillStyle="#181824";
+                ctx.fillRect(x,y,TILE,TILE);
+            }
+        }
+    }
+}
+
+function drawObjects(){
+
+    // KLUCZE
+
+    keys.forEach(k=>{
+
+        ctx.save();
+        ctx.shadowBlur=18;
+        ctx.shadowColor="gold";
+        ctx.fillStyle="#ffd700";
+
+        ctx.beginPath();
+        ctx.arc(k.x,k.y,8,0,Math.PI*2);
+        ctx.fill();
+
+        ctx.fillRect(k.x+5,k.y-2,13,4);
+
+        ctx.restore();
+    });
+
+    // BATERIE
+
+    batteries.forEach(b=>{
+
+        ctx.save();
+
+        ctx.shadowBlur=18;
+        ctx.shadowColor="#44ff88";
+        ctx.fillStyle="#44ff88";
+
+        ctx.fillRect(b.x-7,b.y-11,14,22);
+
+        ctx.fillStyle="white";
+        ctx.fillRect(b.x-3,b.y-6,6,12);
+
+        ctx.restore();
+    });
+}
+
+function drawPlayer(){
+
+    ctx.save();
+
+    ctx.translate(player.x,player.y);
+
+    if(player.invincible>0 && Math.floor(frame/5)%2===0){
+        ctx.globalAlpha=0.35;
+    }
+
+    ctx.shadowBlur=20;
+    ctx.shadowColor="#00eeff";
+    ctx.fillStyle="#62efff";
+
+    ctx.beginPath();
+    ctx.arc(0,0,13,0,Math.PI*2);
+    ctx.fill();
+
+    ctx.fillStyle="white";
+    ctx.beginPath();
+    ctx.arc(4,-4,3,0,Math.PI*2);
+    ctx.fill();
+
+    ctx.restore();
+}
+
+function drawGhost(){
+
+    ctx.save();
+
+    ctx.translate(ghost.x,ghost.y);
+
+    ctx.shadowBlur=25;
+    ctx.shadowColor="red";
+    ctx.fillStyle="#d9e2ec";
+
+    ctx.beginPath();
+    ctx.arc(0,-3,17,Math.PI,0);
+    ctx.lineTo(17,15);
+    ctx.lineTo(9,10);
+    ctx.lineTo(0,16);
+    ctx.lineTo(-9,10);
+    ctx.lineTo(-17,15);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.fillStyle="red";
+
+    ctx.beginPath();
+    ctx.arc(-6,-5,3,0,Math.PI*2);
+    ctx.arc(6,-5,3,0,Math.PI*2);
+    ctx.fill();
+
+    ctx.restore();
+}
+
+function draw(){
+
+    ctx.clearRect(0,0,W,H);
+
+    ctx.fillStyle="#10101c";
+    ctx.fillRect(0,0,W,H);
+
+    drawMap();
+    drawObjects();
+
+    // WYJŚCIE
+
+    ctx.fillStyle=collected>=5?"#00ff77":"#b22d4d";
+    ctx.fillRect(805,55,40,45);
+
+    ctx.fillStyle="white";
+    ctx.font="12px Arial";
+    ctx.fillText("EXIT",805,45);
+
+    // GWIAZDKI / PYŁ
+
+    stars.forEach(s=>{
+        ctx.fillStyle="#aaaaee";
+        ctx.globalAlpha=0.4;
+        ctx.fillRect(s.x,s.y,s.size,s.size);
+    });
+
+    ctx.globalAlpha=1;
+
+    // LATARKA
+
+    const radius=energy>0?190:75;
+
+    const gradient=ctx.createRadialGradient(
+        player.x,player.y,10,
+        player.x,player.y,radius
+    );
+
+    gradient.addColorStop(0,"rgba(255,255,220,0)");
+    gradient.addColorStop(0.65,"rgba(0,0,0,0.3)");
+    gradient.addColorStop(1,"rgba(0,0,0,0.97)");
+
+    ctx.fillStyle=gradient;
+    ctx.fillRect(0,0,W,H);
+
+    // RYSOWANIE POSTACI NA WIERZCHU
+
+    drawGhost();
+    drawPlayer();
+
+    if(collected>=5){
+
+        ctx.fillStyle="#00ff99";
+        ctx.font="bold 20px Arial";
+        ctx.fillText("DRZWI ODBLOKOWANE!",320,730);
+    }
+}
+
+// ==========================================
+// KONIEC GRY
+// ==========================================
+
+function endGame(win){
+
+    running=false;
+
+    document.getElementById("overlay").innerHTML=`
+    <div class="panel">
+        <h1>${win?"UCIEKŁEŚ! 🎉":"ZŁAPAŁ CIĘ DUCH! 👻"}</h1>
+        <h2>Wynik: ${score}</h2>
+        <p>Klucze: ${collected}/5</p>
+        <button onclick="startGame()">ZAGRAJ PONOWNIE</button>
+    </div>`;
+
+    document.getElementById("overlay").style.display="flex";
+}
+
+// ==========================================
+// GŁÓWNA PĘTLA
+// ==========================================
+
+function loop(now){
+
+    if(!running)return;
+
+    let dt=Math.min((now-lastTime)/16.67,2);
+    lastTime=now;
+
+    update(dt);
+    draw();
+
+    if(running){
+        requestAnimationFrame(loop);
+    }
+}
+
+</script>
+</body>
+</html>
